@@ -1,0 +1,86 @@
+id : (A: Type) -> A -> A;
+id = A => a =>
+  a;
+
+Unit : Type;
+Unit =
+  {unit};
+
+unit : Unit;
+unit =
+  :unit;
+
+Nat : Type;
+Nat =
+  (label: {zero succ}) !> match label {
+    |zero| Unit;
+    |succ| Nat;
+  };
+
+zero : Nat;
+zero =
+  :zero, unit;
+
+succ : Nat -> Nat;
+succ = value =>
+  :succ, value;
+
+add : Nat -> Nat -> Nat;
+add = one => other =>
+  split one {|label, one| match label {
+    |zero| other;
+    |succ| succ (add one other);
+  }};
+
+Stream : Type -> Type;
+Stream = A =>
+  A !> (Unit -> Stream A);
+
+from : Nat -> Stream Nat;
+from = initial =>
+  initial, (unit => from (succ initial));
+
+List : Type -> Type;
+List = A =>
+  (label: {null cons}) !> match label {
+    |null| Unit;
+    |cons| A !> List A;
+  };
+
+null : (A: Type) -> List A;
+null = A =>
+  :null, unit;
+
+cons : (A: Type) -> A -> List A -> List A;
+cons = A => a => rest =>
+  :cons, a, rest;
+
+take : (A: Type) -> Nat -> Stream A -> List A;
+take = A => quantity => stream =>
+  split quantity {|label, quantity| match label {
+    |zero| null A;
+    |succ| split stream {|a, rest| cons A a (take A quantity (rest unit))};
+  }};
+
+Vec : Type -> Nat -> Type;
+Vec = A => size =>
+  split size {|label, size| match label {
+    |zero| Unit;
+    |succ| A !> Vec A size;
+  }};
+
+empty : (A: Type) -> Vec A zero;
+empty = A =>
+  unit;
+
+push : (A: Type) -> (size: Nat) -> A -> Vec A size -> Vec A (succ size);
+push = A => size => a => rest =>
+  a, rest;
+
+head : (A: Type) -> (size: Nat) -> Vec A (succ size) -> A;
+head = A => size => vec =>
+  split vec {|a, _| a};
+
+list : List Nat;
+list =
+  take Nat (succ (succ (succ zero))) (from zero);

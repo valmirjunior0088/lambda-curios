@@ -1,0 +1,10 @@
+cradle:
+  stack:
+    - path: "./src"
+      component: "lambda-curios:lib"
+
+    - path: "./app/Main.hs"
+      component: "lambda-curios:exe:lambda-curios-exe"
+
+    - path: "./app/Paths_lambda_curios.hs"
+      component: "lambda-curios:exe:lambda-curios-exe"

@@ -1,0 +1,66 @@
+cabal-version: 1.12
+
+-- This file has been generated from package.yaml by hpack version 0.34.4.
+--
+-- see: https://github.com/sol/hpack
+
+name:           lambda-curios
+version:        0.1.0.0
+description:    Please see the README on GitHub at <https://github.com/valmirjunior0088/lambda-curios#readme>
+homepage:       https://github.com/valmirjunior0088/lambda-curios#readme
+bug-reports:    https://github.com/valmirjunior0088/lambda-curios/issues
+author:         Valmir Pretto
+maintainer:     valmirjunior0088 dot gmail dot com
+copyright:      (2022 - present) Valmir Pretto
+license:        BSD3
+license-file:   LICENSE
+build-type:     Simple
+extra-source-files:
+    README.md
+
+source-repository head
+  type: git
+  location: https://github.com/valmirjunior0088/lambda-curios
+
+library
+  exposed-modules:
+      Check
+      Context
+      Equal
+      Globals
+      Locals
+      Parse
+      Program
+      Term
+      Util
+  other-modules:
+      Paths_lambda_curios
+  hs-source-dirs:
+      src
+  default-extensions:
+      NamedFieldPuns
+      LambdaCase
+  build-depends:
+      base >=4.7 && <5
+    , containers >=0.6 && <1
+    , megaparsec >=9.2 && <10
+    , mtl >=2.2 && <3
+  default-language: Haskell2010
+
+executable lambda-curios-exe
+  main-is: Main.hs
+  other-modules:
+      Paths_lambda_curios
+  hs-source-dirs:
+      app
+  default-extensions:
+      NamedFieldPuns
+      LambdaCase
+  ghc-options: -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      base >=4.7 && <5
+    , containers >=0.6 && <1
+    , lambda-curios
+    , megaparsec >=9.2 && <10
+    , mtl >=2.2 && <3
+  default-language: Haskell2010
