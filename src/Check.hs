@@ -21,57 +21,71 @@ import Equal (MonadEqual, runEqualT, equal)
 import Control.Monad (unless)
 import Control.Monad.Trans (lift)
 import Control.Monad.Except (MonadError, ExceptT, runExceptT, throwError)
+import Control.Monad.State (MonadState, StateT, evalStateT, get, put, gets, modify)
 import Control.Monad.Identity (runIdentity)
 
+region :: MonadState s m => m a -> m a
+region action = do
+  state <- get
+  result <- action
+  put state
+  return result
+
 newtype CheckT m a =
-  CheckT (ExceptT String (ContextT m) a)
-  deriving (Functor, Applicative, Monad, MonadError String)
+  CheckT (ExceptT String (StateT Locals (ContextT m)) a)
+  deriving (Functor, Applicative, Monad, MonadError String, MonadState Locals)
 
 runCheckT :: Monad m => CheckT m a -> ContextT m (Either String a)
-runCheckT (CheckT action) = runExceptT action
+runCheckT (CheckT action) = evalStateT (runExceptT action) Locals.empty
 
 instance Monad m => MonadContext (CheckT m) where
-  access action = CheckT (lift $ access action)
-  fresh = CheckT (lift fresh)
-  reduce term = CheckT (lift $ reduce term)
+  access action = CheckT (lift $ lift $ access action)
+  fresh = CheckT (lift $ lift fresh)
+  reduce term = CheckT (lift $ lift $ reduce term)
 
 instance Monad m => MonadEqual (CheckT m) where
-  equal one other = CheckT (lift $ runEqualT $ equal one other)
+  equal one other = CheckT (lift $ lift $ runEqualT $ equal one other)
 
-infer :: Monad m => Locals -> Term -> CheckT m Type
-infer locals = \case
+bind :: Monad m => Type -> CheckT m String
+bind tipe = do name <- fresh; modify (Locals.bind name tipe); return name
+
+constrain :: Monad m => Variable -> Term -> CheckT m ()
+constrain variable term = modify (Locals.constrain variable term)
+
+infer :: Monad m => Term -> CheckT m Type
+infer = \case
   Term.Global name -> access (Globals.declaration name) >>= \case
     Nothing -> throwError ("unknown global `" ++ name ++ "`")
     Just tipe -> return tipe
 
-  Term.Local variable -> case Locals.bound variable locals of
+  Term.Local variable -> gets (Locals.bound variable) >>= \case
     Nothing -> error "unknown local variable -- should not happen"
     Just tipe -> return tipe
 
   Term.Type -> return Term.Type
 
-  Term.FunctionType input scope -> do
-    check locals Term.Type input 
-
-    name <- fresh
-    check (Locals.bind name input locals) Term.Type (open name scope)
+  Term.FunctionType input scope -> region $ do
+    check Term.Type input
+    
+    name <- bind input
+    check Term.Type (open name scope)
 
     return Term.Type
 
   Term.Function _ -> throwError "functions don't have an inferable type"
 
-  Term.Apply function argument -> infer locals function >>= reduce >>= \case
+  Term.Apply function argument -> infer function >>= reduce >>= \case
     Term.FunctionType input scope -> do
-      check locals input argument 
+      check input argument 
       return (instantiate argument scope)
     
     _ -> throwError "function application type mismatch"
 
-  Term.PairType input scope -> do
-    check locals Term.Type input 
+  Term.PairType input scope -> region $ do
+    check Term.Type input 
 
-    name <- fresh
-    check (Locals.bind name input locals) Term.Type (open name scope) 
+    name <- bind input
+    check Term.Type (open name scope) 
 
     return Term.Type
 
@@ -87,41 +101,37 @@ infer locals = \case
 
   Term.Match _ _ -> throwError "match expressions don't have an inferable type"
 
-check :: Monad m => Locals -> Type -> Term -> CheckT m ()
-check locals tipe = \case
+check :: Monad m => Type -> Term -> CheckT m ()
+check tipe = \case
   Term.Function body -> reduce tipe >>= \case
-    Term.FunctionType input scope -> do
-      name <- fresh
-      check (Locals.bind name input locals) (open name scope) (open name body)
+    Term.FunctionType input scope -> region $ do
+      name <- bind input
+      check (open name scope) (open name body)
     
     _ -> throwError "function type mismatch"
   
   Term.Pair left right -> reduce tipe >>= \case
     Term.PairType input scope -> do
-      check locals input left
-      check locals (instantiate left scope) right
+      check input left
+      check (instantiate left scope) right
     
     _ -> throwError "pair type mismatch"
   
-  Term.Split scrutinee body -> infer locals scrutinee >>= reduce >>= \case
-    Term.PairType input scope -> do
-      left <- fresh
-      right <- fresh
+  Term.Split scrutinee body -> infer scrutinee >>= reduce >>= \case
+    Term.PairType input scope -> region $ do
+      left <- bind input
+      right <- bind (open left scope)
 
-      bound <- return $ Locals.bind right (open left scope) 
-        $ Locals.bind left input
-        $ locals
-
-      constrained <- reduce scrutinee >>= return . \case
-        Term.Local variable -> Locals.constrain variable pair bound where
+      reduce scrutinee >>= \case
+        Term.Local variable -> constrain variable pair where
           leftComponent = Term.Local (Variable left)
           rightComponent = Term.Local (Variable right)
           pair = Term.Pair leftComponent rightComponent
 
-        _ -> bound
+        _ -> return ()
       
-      check constrained tipe (open right (open left body))
-
+      check tipe (open right (open left body))
+      
     _ -> throwError "split expression scrutinee type mismatch"
   
   Term.Label label -> reduce tipe >>= \case
@@ -131,31 +141,32 @@ check locals tipe = \case
     _ -> throwError "label type mismatch"
   
   Term.Match scrutinee branches -> do
-    labels <- return $ map fst branches
+    let labels = map fst branches
 
     unless (unique labels)
       (throwError "match expression has repeated branch labels")
     
-    infer locals scrutinee >>= reduce >>= \case
+    infer scrutinee >>= reduce >>= \case
       Term.LabelType set -> do
         unless (labels <==> set)
           (throwError "match expression branch labels do not match scrutinee label type")
         
         go <- reduce scrutinee >>= return . \case
-          Term.Local variable -> \(label, body) ->
-            check (Locals.constrain variable (Term.Label label) locals) tipe body
+          Term.Local variable -> \(label, body) -> region $ do
+            constrain variable (Term.Label label)
+            check tipe body
           
-          _ -> \(_, body) -> check locals tipe body
+          _ -> \(_, body) -> check tipe body
         
         mapM_ go branches
 
       _ -> throwError "match expression scrutinee type mismatch"
 
   term -> do
-    tipe' <- infer locals term
+    tipe' <- infer term
     areEqual <- equal tipe tipe'
     unless areEqual (throwError "type mismatch")
 
 checks :: Globals -> Type -> Term -> Either String ()
 checks globals tipe term =
-  runIdentity (runContextT (runCheckT (check Locals.empty tipe term)) globals)
+  runIdentity (runContextT (runCheckT (check tipe term)) globals)
