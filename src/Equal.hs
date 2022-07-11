@@ -2,7 +2,7 @@
 
 module Equal
   ( MonadEqual (..)
-  , EqualT (..)
+  , EqualT
   , runEqualT
   )
   where
@@ -11,23 +11,25 @@ import Term (Term, open)
 import qualified Term as Term
 
 import Util ((<==>), (.&&.), (.||.))
-import Context (MonadContext, ContextT, access, fresh, reduce)
+import Base (MonadBase, BaseT, askGlobals, getLocals, putLocals, fresh, reduce)
 
 import Control.Monad.Trans (lift)
 import Control.Monad.Reader (MonadReader, ReaderT, runReaderT, asks, local)
 
-class MonadEqual m where
+class Monad m => MonadEqual m where
   equal :: Term -> Term -> m Bool
 
 newtype EqualT m a =
-  EqualT (ReaderT [(Term, Term)] (ContextT m) a)
+  EqualT (ReaderT [(Term, Term)] (BaseT m) a)
   deriving (Functor, Applicative, Monad, MonadReader [(Term, Term)])
 
-runEqualT :: Monad m => EqualT m a -> ContextT m a
+runEqualT :: Monad m => EqualT m a -> BaseT m a
 runEqualT (EqualT action) = runReaderT action []
 
-instance Monad m => MonadContext (EqualT m) where
-  access action = EqualT (lift $ access action)
+instance Monad m => MonadBase (EqualT m) where
+  askGlobals = EqualT (lift askGlobals)
+  getLocals = EqualT (lift getLocals)
+  putLocals locals = EqualT (lift $ putLocals locals)
   fresh = EqualT (lift fresh)
   reduce term = EqualT (lift $ reduce term)
 

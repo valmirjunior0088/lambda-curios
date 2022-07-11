@@ -5,62 +5,72 @@ module Check
   )
   where
 
-import Term (Variable (Variable), Type, Term, instantiate, open)
+import Term (Variable (Variable), unwrap, Type, Term, instantiate, open)
 import qualified Term as Term
 
-import Globals (Globals)
-import qualified Globals as Globals
-
-import Locals (Locals)
-import qualified Locals as Locals
+import Context (Context)
+import qualified Context as Context
 
 import Util (unique, (<==>))
-import Context (MonadContext, ContextT, runContextT, access, fresh, reduce)
+import Base (MonadBase, BaseT, runBaseT, askGlobals, getLocals, putLocals, fresh, reduce)
 import Equal (MonadEqual, runEqualT, equal)
 
 import Control.Monad (unless)
 import Control.Monad.Trans (lift)
 import Control.Monad.Except (MonadError, ExceptT, runExceptT, throwError)
-import Control.Monad.State (MonadState, StateT, evalStateT, get, put, gets, modify)
 import Control.Monad.Identity (runIdentity)
 
-region :: MonadState s m => m a -> m a
-region action = do
-  state <- get
-  result <- action
-  put state
-  return result
-
 newtype CheckT m a =
-  CheckT (ExceptT String (StateT Locals (ContextT m)) a)
-  deriving (Functor, Applicative, Monad, MonadError String, MonadState Locals)
+  CheckT (ExceptT String (BaseT m) a)
+  deriving (Functor, Applicative, Monad, MonadError String)
 
-runCheckT :: Monad m => CheckT m a -> ContextT m (Either String a)
-runCheckT (CheckT action) = evalStateT (runExceptT action) Locals.empty
+runCheckT :: Monad m => CheckT m a -> BaseT m (Either String a)
+runCheckT (CheckT action) = runExceptT action
 
-instance Monad m => MonadContext (CheckT m) where
-  access action = CheckT (lift $ lift $ access action)
-  fresh = CheckT (lift $ lift fresh)
-  reduce term = CheckT (lift $ lift $ reduce term)
+instance Monad m => MonadBase (CheckT m) where
+  askGlobals = CheckT (lift askGlobals)
+  getLocals = CheckT (lift getLocals)
+  putLocals locals = CheckT (lift $ putLocals locals)
+  fresh = CheckT (lift fresh)
+  reduce term = CheckT (lift $ reduce term)
 
 instance Monad m => MonadEqual (CheckT m) where
-  equal one other = CheckT (lift $ lift $ runEqualT $ equal one other)
+  equal one other = CheckT (lift $ runEqualT $ equal one other)
+
+region :: Monad m => CheckT m a -> CheckT m a
+region action = do
+  locals <- getLocals
+  result <- action
+  putLocals locals
+  return result
 
 bind :: Monad m => Type -> CheckT m String
-bind tipe = do name <- fresh; modify (Locals.bind name tipe); return name
+bind tipe = do
+  name <- fresh
+  locals <- getLocals
+  putLocals (Context.declare name tipe locals)
+  return name
 
-constrain :: Monad m => Variable -> Term -> CheckT m ()
-constrain variable term = modify (Locals.constrain variable term)
+constrain :: Monad m => String -> Term -> CheckT m ()
+constrain name term = do
+  locals <- getLocals
+  putLocals (Context.define name term locals)
 
 infer :: Monad m => Term -> CheckT m Type
 infer = \case
-  Term.Global name -> access (Globals.declaration name) >>= \case
-    Nothing -> throwError ("unknown global `" ++ name ++ "`")
-    Just tipe -> return tipe
+  Term.Global name -> do
+    globals <- askGlobals
 
-  Term.Local variable -> gets (Locals.bound variable) >>= \case
-    Nothing -> error "unknown local variable -- should not happen"
-    Just tipe -> return tipe
+    case Context.declaration name globals of
+      Nothing -> throwError ("unknown global `" ++ name ++ "`")
+      Just tipe -> return tipe
+
+  Term.Local variable -> do
+    locals <- getLocals
+
+    case Context.declaration (unwrap variable) locals of
+      Nothing -> error "unknown local variable -- should not happen"
+      Just tipe -> return tipe
 
   Term.Type -> return Term.Type
 
@@ -123,7 +133,7 @@ check tipe = \case
       right <- bind (open left scope)
 
       reduce scrutinee >>= \case
-        Term.Local variable -> constrain variable pair where
+        Term.Local variable -> constrain (unwrap variable) pair where
           leftComponent = Term.Local (Variable left)
           rightComponent = Term.Local (Variable right)
           pair = Term.Pair leftComponent rightComponent
@@ -153,7 +163,7 @@ check tipe = \case
         
         go <- reduce scrutinee >>= return . \case
           Term.Local variable -> \(label, body) -> region $ do
-            constrain variable (Term.Label label)
+            constrain (unwrap variable) (Term.Label label)
             check tipe body
           
           _ -> \(_, body) -> check tipe body
@@ -167,6 +177,6 @@ check tipe = \case
     areEqual <- equal tipe tipe'
     unless areEqual (throwError "type mismatch")
 
-checks :: Globals -> Type -> Term -> Either String ()
+checks :: Context -> Type -> Term -> Either String ()
 checks globals tipe term =
-  runIdentity (runContextT (runCheckT (check tipe term)) globals)
+  runIdentity (runBaseT (runCheckT (check tipe term)) globals)

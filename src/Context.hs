@@ -1,58 +1,44 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-
 module Context
-  ( MonadContext (..)
-  , ContextT (..)
-  , runContextT
+  ( Context
+  , empty
+  , declare
+  , declaration
+  , declared
+  , define
+  , definition
   )
   where
 
-import Term (Term, instantiate)
-import qualified Term as Term
+import Term (Type, Term)
 
-import Globals (Globals)
-import qualified Globals as Globals
+import Data.Map (Map)
+import qualified Data.Map as Map
 
-import Util ((!?))
+data Context = Context
+  { declarations :: Map String Type
+  , definitions :: Map String Term
+  }
+  deriving (Show)
 
-import Control.Monad.Reader (MonadReader, ReaderT, runReaderT, asks)
-import Control.Monad.State (MonadState, StateT, evalStateT, get, put)
+empty :: Context
+empty = Context
+  { declarations = Map.empty
+  , definitions = Map.empty
+  }
 
-class MonadContext m where
-  access :: (Globals -> a) -> m a
-  fresh :: m String
-  reduce :: Term -> m Term
+declare :: String -> Type -> Context -> Context
+declare name tipe Context { declarations, definitions } =
+  Context { declarations = Map.insert name tipe declarations, definitions }
 
-newtype ContextT m a =
-  ContextT (StateT Integer (ReaderT Globals m) a)
-  deriving (Functor, Applicative, Monad, MonadReader Globals, MonadState Integer)
+declaration :: String -> Context -> Maybe Type
+declaration name Context { declarations } = Map.lookup name declarations
 
-runContextT :: Monad m => ContextT m a -> Globals -> m a
-runContextT (ContextT action) globals = runReaderT (evalStateT action 0) globals
+declared :: String -> Context -> Bool
+declared name Context { declarations } = Map.member name declarations
 
-instance Monad m => MonadContext (ContextT m) where
-  access = asks
+define :: String -> Term -> Context -> Context
+define name term Context { declarations, definitions } =
+  Context { declarations, definitions = Map.insert name term definitions }
 
-  fresh = do
-    source <- get
-    put (succ source)
-    return (show source)
-  
-  reduce = \case
-    Term.Global name -> access (Globals.definition name) >>= \case
-      Just term -> reduce term
-      _ -> return (Term.Global name)
-
-    Term.Apply function argument -> reduce function >>= \case
-      Term.Function body -> reduce (instantiate argument body)
-      _ -> return (Term.Apply function argument)
-
-    Term.Split scrutinee body -> reduce scrutinee >>= \case
-      Term.Pair left right -> reduce (instantiate right (instantiate left body))
-      _ -> return (Term.Split scrutinee body)
-
-    Term.Match scrutinee branches -> reduce scrutinee >>= \case
-      Term.Label label -> reduce (label !? branches)
-      _ -> return (Term.Match scrutinee branches)
-    
-    term -> return term
+definition :: String -> Context -> Maybe Term
+definition name Context { definitions } = Map.lookup name definitions

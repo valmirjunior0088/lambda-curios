@@ -18,9 +18,9 @@ data Variable =
   Bound Int
   deriving (Show, Eq)
 
-unwrap :: (String -> a) -> Variable -> a
-unwrap action = \case
-  Variable name -> action name
+unwrap :: Variable -> String
+unwrap = \case
+  Variable name -> name
   Bound _ -> error "bound variable -- should not happen"
 
 newtype Scope a = Scope a

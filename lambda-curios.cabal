@@ -24,11 +24,10 @@ source-repository head
 
 library
   exposed-modules:
+      Base
       Check
       Context
       Equal
-      Globals
-      Locals
       Parse
       Program
       Term

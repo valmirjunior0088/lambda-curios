@@ -8,8 +8,8 @@ module Program
 import Term (Type, Term)
 import qualified Term as Term
 
-import Globals (Globals)
-import qualified Globals as Globals
+import Context (Context)
+import qualified Context as Context
 
 import Check (checks)
 
@@ -25,27 +25,27 @@ newtype Program =
   Program [Entry]
   deriving (Show)
 
-declare :: String -> Type -> Globals -> Either String Globals
-declare name tipe globals = do
-  when (Globals.declared name globals)
+declare :: String -> Type -> Context -> Either String Context
+declare name tipe context = do
+  when (Context.declared name context)
     (Left "declared name being declared again")
 
-  checks globals Term.Type tipe
-  Right (Globals.declare name tipe globals)
+  checks context Term.Type tipe
+  Right (Context.declare name tipe context)
 
-define :: String -> Term -> Globals -> Either String Globals
-define name term globals = do
-  tipe <- case Globals.declaration name globals of
+define :: String -> Term -> Context -> Either String Context
+define name term context = do
+  tipe <- case Context.declaration name context of
     Nothing -> Left "undeclared name being defined"
     Just tipe -> Right tipe
   
-  checks globals tipe term
-  Right (Globals.define name term globals)
+  checks context tipe term
+  Right (Context.define name term context)
 
-handle :: Globals -> Entry -> Either String Globals
-handle globals = \case
-  Declaration name tipe -> declare name tipe globals
-  Definition name term -> define name term globals
+handle :: Context -> Entry -> Either String Context
+handle context = \case
+  Declaration name tipe -> declare name tipe context
+  Definition name term -> define name term context
 
-run :: Program -> Either String Globals
-run (Program entries) = foldlM handle Globals.empty entries
+run :: Program -> Either String Context
+run (Program entries) = foldlM handle Context.empty entries
